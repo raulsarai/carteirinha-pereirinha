@@ -23,6 +23,8 @@ export const sanitizeChave = (val: unknown): string => {
     .replace(/[^\w-]/g, "");
 };
 
+
+
 export default function PhotoSession({
   students,
   initialPhotos = {},
