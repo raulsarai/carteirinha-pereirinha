@@ -15,13 +15,13 @@ type Props = {
   onClose: () => void;
 };
 
-export function sanitizeChave(raw: string | number | null | undefined): string {
-  return String(raw ?? "")
-    .replace(/\//g, "-")
-    .replace(/\s/g, "_")
+export const sanitizeChave = (val: unknown): string => {
+  if (val === null || val === undefined) return "";
+  return String(val)
     .trim()
-    .toLowerCase(); // ← normaliza case também
-}
+    .replace(/\s+/g, "_")
+    .replace(/[^\w-]/g, "");
+};
 
 export default function PhotoSession({
   students,
@@ -258,7 +258,6 @@ export default function PhotoSession({
           <HeaderInfo>
             <Progress>
               {currentIndex + 1} / {students.length}
-
             </Progress>
             <StudentName>{currentStudent?.ALUNO}</StudentName>
             {/* ← Mostra matrícula OU cpf */}
@@ -591,8 +590,12 @@ const SearchInput = styled.input`
   font-size: 14px;
   outline: none;
   box-sizing: border-box;
-  &::placeholder { color: #666; }
-  &:focus { border-color: #0070f3; }
+  &::placeholder {
+    color: #666;
+  }
+  &:focus {
+    border-color: #0070f3;
+  }
 `;
 const ClearSearch = styled.button`
   position: absolute;
@@ -603,7 +606,9 @@ const ClearSearch = styled.button`
   cursor: pointer;
   font-size: 12px;
   padding: 0;
-  &:hover { color: #fff; }
+  &:hover {
+    color: #fff;
+  }
 `;
 const EmptySearch = styled.div`
   text-align: center;
@@ -611,4 +616,3 @@ const EmptySearch = styled.div`
   font-size: 13px;
   padding: 16px;
 `;
-

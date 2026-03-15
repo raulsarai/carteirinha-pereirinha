@@ -4,6 +4,7 @@ import {
   getPhotos,
   syncAlunos,
 } from "@/lib/photos";
+import { toJpeg } from "html-to-image";
 import dynamic from "next/dynamic";
 import QRCode from "qrcode";
 import React, { useEffect, useRef, useState } from "react";
@@ -11,7 +12,6 @@ import styled from "styled-components";
 import * as XLSX from "xlsx";
 import EditAlunoModal from "../components/EditAlunoModal";
 import PhotoSession, { sanitizeChave } from "../components/PhotoSession";
-import { toJpeg } from "html-to-image";
 
 const PdfDownloadButton = dynamic(
   () => import("../components/PdfDownloadButton"),
@@ -39,6 +39,11 @@ const PdfDownloadButton = dynamic(
 const NotifierManager = {
   error: (msg: string) => alert(`Erro: ${msg}`),
   success: (msg: string) => alert(`Sucesso: ${msg}`),
+};
+
+const toString = (val: unknown): string => {
+  if (val === null || val === undefined) return "";
+  return String(val).trim();
 };
 
 const MOCK_STUDENT = {
@@ -325,41 +330,40 @@ export default function CarteirinhaGenerator() {
     }
   };
 
-const handleDownloadJpg = async () => {
-  if (!previewCardRef.current || !previewStudent) return;
-  setDownloadingJpg(true);
-  try {
-    const dataUrl = await toJpeg(previewCardRef.current, {
-      quality: 0.95,
-      pixelRatio: 3,
-      backgroundColor: "#000000",
-    });
+  const handleDownloadJpg = async () => {
+    if (!previewCardRef.current || !previewStudent) return;
+    setDownloadingJpg(true);
+    try {
+      const dataUrl = await toJpeg(previewCardRef.current, {
+        quality: 0.95,
+        pixelRatio: 3,
+        backgroundColor: "#000000",
+      });
 
-    // Rotaciona 90° para landscape
-    const img = new Image();
-    img.src = dataUrl;
-    await new Promise((res) => (img.onload = res));
+      // Rotaciona 90° para landscape
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise((res) => (img.onload = res));
 
-    const landscape = document.createElement("canvas");
-    landscape.width = img.height;
-    landscape.height = img.width;
-    const ctx = landscape.getContext("2d")!;
-    ctx.translate(landscape.width / 2, landscape.height / 2);
-    ctx.rotate((90 * Math.PI) / 180);
-    ctx.drawImage(img, -img.width / 2, -img.height / 2);
+      const landscape = document.createElement("canvas");
+      landscape.width = img.height;
+      landscape.height = img.width;
+      const ctx = landscape.getContext("2d")!;
+      ctx.translate(landscape.width / 2, landscape.height / 2);
+      ctx.rotate((90 * Math.PI) / 180);
+      ctx.drawImage(img, -img.width / 2, -img.height / 2);
 
-    const link = document.createElement("a");
-    link.download = `carteirinha_${previewStudent["ALUNO"] || "aluno"}.jpg`;
-    link.href = landscape.toDataURL("image/jpeg", 0.95);
-    link.click();
-  } catch (err) {
-    console.error("Erro ao gerar JPG:", err);
-    NotifierManager.error("Falha ao gerar a imagem.");
-  } finally {
-    setDownloadingJpg(false);
-  }
-};
-
+      const link = document.createElement("a");
+      link.download = `carteirinha_${previewStudent["ALUNO"] || "aluno"}.jpg`;
+      link.href = landscape.toDataURL("image/jpeg", 0.95);
+      link.click();
+    } catch (err) {
+      console.error("Erro ao gerar JPG:", err);
+      NotifierManager.error("Falha ao gerar a imagem.");
+    } finally {
+      setDownloadingJpg(false);
+    }
+  };
 
   // ─── UPLOAD PLANILHA ──────────────────────────────────────────────────────
 
@@ -395,11 +399,13 @@ const handleDownloadJpg = async () => {
 
         const qrMap: Record<string, string> = {};
         for (const student of json) {
-          const chave = sanitizeChave(student["Nº Matric"] || student["CPF"]);
+          const chave = sanitizeChave(
+            toString(student["Nº Matric"]) || toString(student["CPF"]),
+          );
           const qrInput =
-            student["Nº Matric"] ||
-            student["CPF"] ||
-            student["ALUNO"] ||
+            toString(student["Nº Matric"]) ||
+            toString(student["CPF"]) ||
+            toString(student["ALUNO"]) ||
             chave ||
             "sem-id";
 
