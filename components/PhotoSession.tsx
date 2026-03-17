@@ -693,7 +693,7 @@ const EmptySearch = styled.div`
 `;
 
 const CameraArea = styled.div`
-  width: min(100%, 340px);
+  width: min(100%, 280px);
   aspect-ratio: 3 / 4;
   background: #000;
   border-radius: 16px;
@@ -754,8 +754,8 @@ const HeadGuide = styled.div`
   top: 12%;
   left: 50%;
   transform: translateX(-50%);
-  width: 46%;
-  height: 30%;
+  width: 45%;
+  height: 37%;
   border: 2px dashed rgba(255, 255, 255, 0.75);
   border-radius: 999px;
 `;
@@ -777,7 +777,7 @@ const ShoulderGuide = styled.div`
 const GuideText = styled.div`
   position: absolute;
   left: 50%;
-  bottom: 6%;
+  bottom: 5%;
   transform: translateX(-50%);
   font-size: 12px;
   font-weight: 700;
