@@ -233,64 +233,80 @@ export default function CarteirinhaGenerator() {
 
   // ─── DOWNLOAD JPG LANDSCAPE ───────────────────────────────────────────────
 
-  const handleRefreshFromDB = async () => {
-    setIsRefreshing(true);
-    try {
-      // Busca alunos diretamente do banco — sem depender de planilha local
-      const alunosDB = await getAlunos();
+const normalizeMatricula = (val: unknown): string =>
+  String(val ?? "")
+    .trim()
+    .replace(/\//g, "-")
+    .replace(/\s+/g, "")
+    .toUpperCase();
 
-      if (alunosDB.length === 0) {
-        NotifierManager.error("Nenhum aluno encontrado no banco de dados.");
-        setIsRefreshing(false);
-        return;
-      }
+const normalizeCpf = (val: unknown): string =>
+  String(val ?? "").replace(/\D/g, "");
 
-      // Busca fotos
-      const alunosRef = alunosDB.map((s: any) => ({
-        matricula: s["Nº Matric"] || null,
-        cpf: s["CPF"] || null,
-      }));
-      const fotosAtualizadas = await getPhotos(alunosRef);
+const handleRefreshFromDB = async () => {
+  setIsRefreshing(true);
+  try {
+    const alunosDB = await getAlunos();
 
-      // Gera QR codes
-      const qrMap: Record<string, string> = {};
-      for (const student of alunosDB) {
-        const chave = sanitizeChave(student["Nº Matric"] || student["CPF"]);
-        const qrInput =
-          student["Nº Matric"] ||
-          student["CPF"] ||
-          student["ALUNO"] ||
-          chave ||
-          "sem-id";
-
-        if (!qrInput || qrInput.trim() === "") continue; // pula se ainda vazio
-
-        qrMap[chave] = await QRCode.toDataURL(qrInput);
-      }
-
-      // Salva tudo no cache local
-      localStorage.setItem("pereirinha_data", JSON.stringify(alunosDB));
-      localStorage.setItem("pereirinha_qrcodes", JSON.stringify(qrMap));
-      localStorage.setItem(
-        "pereirinha_photos",
-        JSON.stringify(fotosAtualizadas),
-      );
-
-      setData(alunosDB);
-      setQrCodes(qrMap);
-      setSessionPhotos(fotosAtualizadas);
-
-      const totalFotos = Object.keys(fotosAtualizadas).length;
-      NotifierManager.success(
-        `${alunosDB.length} alunos carregados do banco · ${totalFotos} foto(s).`,
-      );
-    } catch (err) {
-      console.error("Erro ao buscar do banco:", err);
-      NotifierManager.error("Falha ao buscar dados do banco.");
-    } finally {
-      setIsRefreshing(false);
+    if (alunosDB.length === 0) {
+      NotifierManager.error("Nenhum aluno encontrado no banco de dados.");
+      return;
     }
-  };
+
+    const alunoIds: Record<string, string> = {};
+    for (const aluno of alunosDB) {
+      const id = aluno.id;
+      if (!id) continue;
+
+      const matriculaKey = normalizeMatricula(aluno["Nº Matric"]);
+      const cpfKey = normalizeCpf(aluno["CPF"]);
+
+      if (matriculaKey) alunoIds[matriculaKey] = id;
+      if (cpfKey) alunoIds[cpfKey] = id;
+    }
+
+    const alunosRef = alunosDB.map((s: any) => ({
+      matricula: s["Nº Matric"] || null,
+      cpf: s["CPF"] || null,
+    }));
+    const fotosAtualizadas = await getPhotos(alunosRef);
+
+    const qrMap: Record<string, string> = {};
+    for (const student of alunosDB) {
+      const chave = sanitizeChave(student["Nº Matric"] || student["CPF"]);
+      const qrInput =
+        student["Nº Matric"] ||
+        student["CPF"] ||
+        student["ALUNO"] ||
+        chave ||
+        "sem-id";
+
+      if (!qrInput || String(qrInput).trim() === "") continue;
+
+      qrMap[chave] = await QRCode.toDataURL(String(qrInput));
+    }
+
+    localStorage.setItem("pereirinha_data", JSON.stringify(alunosDB));
+    localStorage.setItem("pereirinha_qrcodes", JSON.stringify(qrMap));
+    localStorage.setItem("pereirinha_photos", JSON.stringify(fotosAtualizadas));
+    localStorage.setItem("alunoIds", JSON.stringify(alunoIds));
+
+    setData(alunosDB);
+    setQrCodes(qrMap);
+    setSessionPhotos(fotosAtualizadas);
+
+    const totalFotos = Object.keys(fotosAtualizadas).length;
+    NotifierManager.success(
+      `${alunosDB.length} alunos carregados do banco · ${totalFotos} foto(s).`
+    );
+  } catch (err) {
+    console.error("Erro ao buscar do banco:", err);
+    NotifierManager.error("Falha ao buscar dados do banco.");
+  } finally {
+    setIsRefreshing(false);
+  }
+};
+
 
   const handleDeleteAll = async () => {
     const confirmado = confirm(
@@ -395,7 +411,9 @@ export default function CarteirinhaGenerator() {
 
         setIsSyncing(true);
         const alunoIds = await syncAlunos(json);
+        console.log("📌 retorno syncAlunos:", alunoIds);
         localStorage.setItem("alunoIds", JSON.stringify(alunoIds));
+        console.log("📌 lido do localStorage:", JSON.parse(localStorage.getItem("alunoIds") || "{}"));
 
         const qrMap: Record<string, string> = {};
         for (const student of json) {

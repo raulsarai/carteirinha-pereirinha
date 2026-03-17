@@ -23,7 +23,19 @@ export const sanitizeChave = (val: unknown): string => {
     .replace(/[^\w-]/g, "");
 };
 
+const normalizeMatricula = (val: unknown): string => {
+  if (val === null || val === undefined) return "";
+  return String(val)
+    .trim()
+    .replace(/\//g, "-")
+    .replace(/\s+/g, "")
+    .toUpperCase();
+};
 
+const normalizeCpf = (val: unknown): string => {
+  if (val === null || val === undefined) return "";
+  return String(val).replace(/\D/g, "");
+};
 
 export default function PhotoSession({
   students,
@@ -47,6 +59,8 @@ export default function PhotoSession({
   const currentStudent = students[currentIndex];
   const isLast = currentIndex === students.length - 1;
   const totalDone = Object.keys(photos).length;
+
+  const [cameraMode, setCameraMode] = useState<"user" | "environment">("user");
 
   const [search, setSearch] = useState("");
 
@@ -77,23 +91,30 @@ export default function PhotoSession({
     return () => stopCamera();
   }, []);
 
-  async function startCamera() {
+  async function startCamera(mode: "user" | "environment" = cameraMode) {
     try {
       setCameraError(null);
 
-      // Tenta câmera frontal primeiro, fallback para qualquer câmera
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.srcObject = null;
+      }
+
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+
       let stream: MediaStream;
+
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: "user", // frontal (selfie)
-            width: { ideal: 640 },
-            height: { ideal: 480 },
+            facingMode: { ideal: mode },
+            width: { ideal: 720 },
+            height: { ideal: 960 },
           },
           audio: false,
         });
       } catch {
-        // Fallback — qualquer câmera disponível
         stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: false,
@@ -101,9 +122,16 @@ export default function PhotoSession({
       }
 
       streamRef.current = stream;
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play(); // ← força play no mobile
+        videoRef.current.onloadedmetadata = async () => {
+          try {
+            await videoRef.current?.play();
+          } catch (err) {
+            console.error("❌ Erro ao iniciar play da câmera:", err);
+          }
+        };
       }
     } catch (err: any) {
       console.error("❌ Erro câmera:", err);
@@ -131,6 +159,13 @@ export default function PhotoSession({
     await startCamera();
   }
 
+  async function toggleCamera() {
+    const nextMode = cameraMode === "user" ? "environment" : "user";
+    setCameraMode(nextMode);
+    setCapturedImage(null);
+    await startCamera(nextMode);
+  }
+
   function dataURLtoBlob(dataUrl: string): Blob {
     const arr = dataUrl.split(",");
     const mime = arr[0].match(/:(.*?);/)?.[1] || "image/jpeg";
@@ -145,20 +180,30 @@ export default function PhotoSession({
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
+
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.getContext("2d")?.drawImage(video, 0, 0);
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    if (cameraMode === "user") {
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+      ctx.restore();
+    } else {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
+
     setCapturedImage(canvas.toDataURL("image/jpeg", 0.9));
   }
 
   function retakePhoto() {
     setCapturedImage(null);
-    if (videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-    }
+    restartCamera();
   }
 
-  // ← Ao clicar em um aluno da lista, muda para ele
   function selectStudent(index: number) {
     setCapturedImage(null);
     setCurrentIndex(index);
@@ -187,13 +232,26 @@ export default function PhotoSession({
       }
 
       const alunoIds = JSON.parse(localStorage.getItem("alunoIds") || "{}");
+
+      const matriculaKey = normalizeMatricula(matricula);
+      const cpfKey = normalizeCpf(cpf);
+      const chaveSanitizada = sanitizeChave(matricula || cpf);
+
       const alunoId =
-        (matricula && alunoIds[matricula]) || (cpf && alunoIds[cpf]) || null;
+        (matriculaKey && alunoIds[matriculaKey]) ||
+        (cpfKey && alunoIds[cpfKey]) ||
+        (chaveSanitizada && alunoIds[chaveSanitizada]) ||
+        null;
 
       if (!alunoId) {
-        console.error(
-          `❌ alunoId não encontrado | matricula: ${matricula} | cpf: ${cpf}`,
-        );
+        console.error("❌ alunoId não encontrado", {
+          matriculaOriginal: matricula,
+          cpfOriginal: cpf,
+          matriculaKey,
+          cpfKey,
+          chaveSanitizada,
+          alunoIds,
+        });
         setUploadStatus("error");
         return;
       }
@@ -278,19 +336,45 @@ export default function PhotoSession({
             <ErrorBox>
               <span>📷</span>
               <p>{cameraError}</p>
-              <RetryButton onClick={startCamera}>Tentar novamente</RetryButton>
+              <RetryButton onClick={() => startCamera()}>Tentar novamente</RetryButton>
+
             </ErrorBox>
           ) : capturedImage ? (
-            <CapturedPreview src={capturedImage} alt="Foto capturada" />
+            <PreviewWrapper>
+              <CapturedPreview
+                src={capturedImage}
+                alt="Foto capturada"
+                $mirrored={cameraMode === "user"}
+              />
+
+              <GuideOverlay>
+                <GuideFrame>
+                  <HeadGuide />
+                  <ShoulderGuide />
+                  <GuideText>Posicione o rosto dentro da moldura</GuideText>
+                </GuideFrame>
+              </GuideOverlay>
+            </PreviewWrapper>
           ) : (
-            <Video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              // @ts-ignore — atributo necessário para iOS Safari
-              webkit-playsinline="true"
-            />
+            <PreviewWrapper>
+              <Video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                $mirrored={cameraMode === "user"}
+                // @ts-ignore
+                webkit-playsinline="true"
+              />
+
+              <GuideOverlay>
+                <GuideFrame>
+                  <HeadGuide />
+                  <ShoulderGuide />
+                  <GuideText>Posicione o rosto dentro da moldura</GuideText>
+                </GuideFrame>
+              </GuideOverlay>
+            </PreviewWrapper>
           )}
           <canvas ref={canvasRef} style={{ display: "none" }} />
         </CameraArea>
@@ -303,6 +387,17 @@ export default function PhotoSession({
             ❌ Erro no upload. Tente novamente.
           </StatusBar>
         )}
+        <CameraToolbar>
+          <CameraModeButton
+            type="button"
+            onClick={toggleCamera}
+            disabled={uploadStatus === "uploading"}
+          >
+            {cameraMode === "user"
+              ? "🔄 Usar câmera traseira"
+              : "🔄 Usar câmera frontal"}
+          </CameraModeButton>
+        </CameraToolbar>
 
         {/* AÇÕES */}
         <Actions>
@@ -450,28 +545,6 @@ const ProgressFill = styled.div`
   border-radius: 99px;
   transition: width 0.4s ease;
 `;
-const CameraArea = styled.div`
-  width: 100%;
-  aspect-ratio: 4/3;
-  background: #000;
-  border-radius: 12px;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-`;
-const Video = styled.video`
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transform: scaleX(-1);
-`;
-const CapturedPreview = styled.img`
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transform: scaleX(-1);
-`;
 const ErrorBox = styled.div`
   display: flex;
   flex-direction: column;
@@ -617,4 +690,128 @@ const EmptySearch = styled.div`
   color: #666;
   font-size: 13px;
   padding: 16px;
+`;
+
+const CameraArea = styled.div`
+  width: min(100%, 340px);
+  aspect-ratio: 3 / 4;
+  background: #000;
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  position: relative;
+  border: 2px solid #2f2f2f;
+`;
+
+const PreviewWrapper = styled.div`
+  position: relative;
+  width: 100%;
+  height: 100%;
+`;
+const Video = styled.video<{ $mirrored: boolean }>`
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: ${(p) => (p.$mirrored ? "scaleX(-1)" : "none")};
+`;
+
+const CapturedPreview = styled.img<{ $mirrored: boolean }>`
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: ${(p) => (p.$mirrored ? "scaleX(-1)" : "none")};
+`;
+
+const GuideOverlay = styled.div`
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.18),
+    rgba(0, 0, 0, 0.1)
+  );
+`;
+
+const GuideFrame = styled.div`
+  position: relative;
+  width: 78%;
+  height: 82%;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 18px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+`;
+
+const HeadGuide = styled.div`
+  position: absolute;
+  top: 12%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 46%;
+  height: 30%;
+  border: 2px dashed rgba(255, 255, 255, 0.75);
+  border-radius: 999px;
+`;
+
+const ShoulderGuide = styled.div`
+  position: absolute;
+  left: 50%;
+  bottom: 16%;
+  transform: translateX(-50%);
+  width: 72%;
+  height: 22%;
+  border: 2px dashed rgba(255, 255, 255, 0.55);
+  border-top-left-radius: 999px;
+  border-top-right-radius: 999px;
+  border-bottom-left-radius: 24px;
+  border-bottom-right-radius: 24px;
+`;
+
+const GuideText = styled.div`
+  position: absolute;
+  left: 50%;
+  bottom: 6%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 6px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+`;
+
+const CameraToolbar = styled.div`
+  display: flex;
+  justify-content: center;
+  margin-top: -6px;
+`;
+
+const CameraModeButton = styled.button`
+  border: none;
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: #2b2b2b;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s, background 0.2s;
+
+  &:hover {
+    background: #3a3a3a;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 `;

@@ -1,44 +1,53 @@
 import { sanitizeChave } from '@/components/PhotoSession'
 import { supabase } from './supabase'
 
-export async function syncAlunos(alunos: any[]): Promise<Record<string, string>> {
-  const alunoMap: Record<string, string> = {} // matricula|cpf → id
 
-  
+const toStr = (val: unknown): string => String(val ?? '').trim()
+
+const normalizeMatricula = (val: unknown): string =>
+  toStr(val)
+    .replace(/\//g, '-')
+    .replace(/\s+/g, '')
+    .toUpperCase()
+
+const normalizeCpf = (val: unknown): string =>
+  toStr(val).replace(/\D/g, '')
+
+const makeComboKey = (matricula: unknown, cpf: unknown): string =>
+  `${normalizeMatricula(matricula)}|${normalizeCpf(cpf)}`
+
+export async function syncAlunos(alunos: any[]): Promise<Record<string, string>> {
+  const alunoMap: Record<string, string> = {}
 
   for (const aluno of alunos) {
-    const nome = aluno['ALUNO']
-    if (!nome) continue // ignora linhas sem nome
+    const nome = toStr(aluno['ALUNO'])
+    if (!nome) continue
 
-    const matricula = aluno['Nº Matric'] || null
-    const cpf = aluno['CPF'] || null
-    const chaveOriginal = matricula || cpf
-    if (!chaveOriginal) continue
+    const matricula = toStr(aluno['Nº Matric']) || null
+    const cpf = toStr(aluno['CPF']) || null
 
-    const chave = sanitizeChave(chaveOriginal)
+    if (!matricula && !cpf) continue
 
-    // Trata data de nascimento
     let dataNasc = aluno['Data Nasc']
     if (typeof dataNasc === 'number') {
       const date = new Date(Math.round((dataNasc - 25569) * 86400 * 1000))
-      dataNasc = date.toISOString().split('T')[0] // formato YYYY-MM-DD
+      dataNasc = date.toISOString().split('T')[0]
     } else if (typeof dataNasc === 'string' && dataNasc.includes('/')) {
       const [d, m, y] = dataNasc.split('/')
       dataNasc = `${y}-${m}-${d}`
     }
 
     const payload = {
-      matricula: aluno['Nº Matric'] || null,
-      nome: nome,
-      rg: aluno['RG aluno'] || null,
-      cpf: aluno['CPF'] || null,
+      matricula: matricula || null,
+      nome,
+      rg: toStr(aluno['RG aluno']) || null,
+      cpf: cpf || null,
       data_nascimento: dataNasc || null,
-      responsavel: aluno['Responsavel'] || null,
-      categoria: aluno['Categoria'] || null,
+      responsavel: toStr(aluno['Responsavel']) || null,
+      categoria: toStr(aluno['Categoria']) || null,
     }
 
-    // Upsert usando matricula ou cpf como conflito
-    const conflictCol = aluno['Nº Matric'] ? 'matricula' : 'cpf'
+    const conflictCol = matricula ? 'matricula' : 'cpf'
 
     const { data, error } = await supabase
       .from('alunos')
@@ -51,13 +60,21 @@ export async function syncAlunos(alunos: any[]): Promise<Record<string, string>>
       continue
     }
 
-    alunoMap[chave] = data.id
-    console.log(`✅ ${nome} | chave: ${chave} | ID: ${data.id}`)
+    const matKey = normalizeMatricula(matricula)
+    const cpfKey = normalizeCpf(cpf)
+    const comboKey = makeComboKey(matricula, cpf)
+
+    if (matKey) alunoMap[matKey] = data.id
+    if (cpfKey) alunoMap[cpfKey] = data.id
+    if (matKey || cpfKey) alunoMap[comboKey] = data.id
+
+    console.log(`✅ ${nome} | matKey: ${matKey} | cpfKey: ${cpfKey} | ID: ${data.id}`)
   }
 
-  console.log(`👥 Total sincronizado: ${Object.keys(alunoMap).length} alunos`)
+  console.log(`👥 Total sincronizado: ${Object.keys(alunoMap).length} chaves`)
   return alunoMap
 }
+
 
 export async function uploadPhoto(
   chave: string,
@@ -141,8 +158,8 @@ export async function getAlunos(): Promise<any[]> {
     return [];
   }
 
-  // Mapeia colunas do banco → chaves que o front espera
   return (data ?? []).map((row: any) => ({
+    id: row.id,
     ALUNO: row.nome ?? "",
     "RG aluno": row.rg ?? "",
     CPF: row.cpf ?? "",
@@ -154,6 +171,7 @@ export async function getAlunos(): Promise<any[]> {
     Categoria: row.categoria ?? "",
   }));
 }
+
 
 export async function deleteAllAlunos(): Promise<void> {
   // Deleta todas as fotos do storage
