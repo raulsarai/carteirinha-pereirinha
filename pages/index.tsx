@@ -4,7 +4,7 @@ import {
   getPhotos,
   syncAlunos,
 } from "@/lib/photos";
-import { toJpeg } from "html-to-image";
+import { toJpeg, toPng } from "html-to-image";
 import dynamic from "next/dynamic";
 import QRCode from "qrcode";
 import React, { useEffect, useRef, useState } from "react";
@@ -65,8 +65,9 @@ const CardPreview = React.forwardRef<
     photoUrl?: string;
     cardAno: number;
     cardValorPerda: string;
+    isExporting?: boolean;
   }
->(({ student, photoUrl, cardAno, cardValorPerda }, ref) => {
+>(({ student, photoUrl, cardAno, cardValorPerda,isExporting }, ref) => {
   const [qrUrl, setQrUrl] = useState("");
 
   useEffect(() => {
@@ -76,7 +77,7 @@ const CardPreview = React.forwardRef<
   }, [student]);
 
   return (
-    <PreviewCardContainer ref={ref}>
+    <PreviewCardContainer ref={ref} $isExporting={isExporting}>
       <HeaderArea>
         <HeaderLeft>
           <Shield src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQrIjfyECBfinxjfTrBPgWRTRGsBitqvYWY3A&s" />
@@ -173,6 +174,8 @@ export default function CarteirinhaGenerator() {
 
   const [isDeletingAll, setIsDeletingAll] = useState(false);
 
+  const [isExporting, setIsExporting] = useState(false);
+
   useEffect(() => {
     const savedData = localStorage.getItem("pereirinha_data");
     const savedQrCodes = localStorage.getItem("pereirinha_qrcodes");
@@ -233,80 +236,82 @@ export default function CarteirinhaGenerator() {
 
   // ─── DOWNLOAD JPG LANDSCAPE ───────────────────────────────────────────────
 
-const normalizeMatricula = (val: unknown): string =>
-  String(val ?? "")
-    .trim()
-    .replace(/\//g, "-")
-    .replace(/\s+/g, "")
-    .toUpperCase();
+  const normalizeMatricula = (val: unknown): string =>
+    String(val ?? "")
+      .trim()
+      .replace(/\//g, "-")
+      .replace(/\s+/g, "")
+      .toUpperCase();
 
-const normalizeCpf = (val: unknown): string =>
-  String(val ?? "").replace(/\D/g, "");
+  const normalizeCpf = (val: unknown): string =>
+    String(val ?? "").replace(/\D/g, "");
 
-const handleRefreshFromDB = async () => {
-  setIsRefreshing(true);
-  try {
-    const alunosDB = await getAlunos();
+  const handleRefreshFromDB = async () => {
+    setIsRefreshing(true);
+    try {
+      const alunosDB = await getAlunos();
 
-    if (alunosDB.length === 0) {
-      NotifierManager.error("Nenhum aluno encontrado no banco de dados.");
-      return;
+      if (alunosDB.length === 0) {
+        NotifierManager.error("Nenhum aluno encontrado no banco de dados.");
+        return;
+      }
+
+      const alunoIds: Record<string, string> = {};
+      for (const aluno of alunosDB) {
+        const id = aluno.id;
+        if (!id) continue;
+
+        const matriculaKey = normalizeMatricula(aluno["Nº Matric"]);
+        const cpfKey = normalizeCpf(aluno["CPF"]);
+
+        if (matriculaKey) alunoIds[matriculaKey] = id;
+        if (cpfKey) alunoIds[cpfKey] = id;
+      }
+
+      const alunosRef = alunosDB.map((s: any) => ({
+        matricula: s["Nº Matric"] || null,
+        cpf: s["CPF"] || null,
+      }));
+      const fotosAtualizadas = await getPhotos(alunosRef);
+
+      const qrMap: Record<string, string> = {};
+      for (const student of alunosDB) {
+        const chave = sanitizeChave(student["Nº Matric"] || student["CPF"]);
+        const qrInput =
+          student["Nº Matric"] ||
+          student["CPF"] ||
+          student["ALUNO"] ||
+          chave ||
+          "sem-id";
+
+        if (!qrInput || String(qrInput).trim() === "") continue;
+
+        qrMap[chave] = await QRCode.toDataURL(String(qrInput));
+      }
+
+      localStorage.setItem("pereirinha_data", JSON.stringify(alunosDB));
+      localStorage.setItem("pereirinha_qrcodes", JSON.stringify(qrMap));
+      localStorage.setItem(
+        "pereirinha_photos",
+        JSON.stringify(fotosAtualizadas),
+      );
+      localStorage.setItem("alunoIds", JSON.stringify(alunoIds));
+
+      setData(alunosDB);
+      setQrCodes(qrMap);
+      setSessionPhotos(fotosAtualizadas);
+
+      const totalFotos = Object.keys(fotosAtualizadas).length;
+      NotifierManager.success(
+        `${alunosDB.length} alunos carregados do banco · ${totalFotos} foto(s).`,
+      );
+    } catch (err) {
+      console.error("Erro ao buscar do banco:", err);
+      NotifierManager.error("Falha ao buscar dados do banco.");
+    } finally {
+      setIsRefreshing(false);
     }
-
-    const alunoIds: Record<string, string> = {};
-    for (const aluno of alunosDB) {
-      const id = aluno.id;
-      if (!id) continue;
-
-      const matriculaKey = normalizeMatricula(aluno["Nº Matric"]);
-      const cpfKey = normalizeCpf(aluno["CPF"]);
-
-      if (matriculaKey) alunoIds[matriculaKey] = id;
-      if (cpfKey) alunoIds[cpfKey] = id;
-    }
-
-    const alunosRef = alunosDB.map((s: any) => ({
-      matricula: s["Nº Matric"] || null,
-      cpf: s["CPF"] || null,
-    }));
-    const fotosAtualizadas = await getPhotos(alunosRef);
-
-    const qrMap: Record<string, string> = {};
-    for (const student of alunosDB) {
-      const chave = sanitizeChave(student["Nº Matric"] || student["CPF"]);
-      const qrInput =
-        student["Nº Matric"] ||
-        student["CPF"] ||
-        student["ALUNO"] ||
-        chave ||
-        "sem-id";
-
-      if (!qrInput || String(qrInput).trim() === "") continue;
-
-      qrMap[chave] = await QRCode.toDataURL(String(qrInput));
-    }
-
-    localStorage.setItem("pereirinha_data", JSON.stringify(alunosDB));
-    localStorage.setItem("pereirinha_qrcodes", JSON.stringify(qrMap));
-    localStorage.setItem("pereirinha_photos", JSON.stringify(fotosAtualizadas));
-    localStorage.setItem("alunoIds", JSON.stringify(alunoIds));
-
-    setData(alunosDB);
-    setQrCodes(qrMap);
-    setSessionPhotos(fotosAtualizadas);
-
-    const totalFotos = Object.keys(fotosAtualizadas).length;
-    NotifierManager.success(
-      `${alunosDB.length} alunos carregados do banco · ${totalFotos} foto(s).`
-    );
-  } catch (err) {
-    console.error("Erro ao buscar do banco:", err);
-    NotifierManager.error("Falha ao buscar dados do banco.");
-  } finally {
-    setIsRefreshing(false);
-  }
-};
-
+  };
 
   const handleDeleteAll = async () => {
     const confirmado = confirm(
@@ -346,39 +351,59 @@ const handleRefreshFromDB = async () => {
     }
   };
 
-  const handleDownloadJpg = async () => {
+  const handleDownloadPng = async () => {
+    // Mudamos para PNG para evitar o fundo preto nos cantos
     if (!previewCardRef.current || !previewStudent) return;
+
     setDownloadingJpg(true);
+
+    // 1. Ativa o modo de exportação (remove a sombra)
+    setIsExporting(true);
+    setDownloadingJpg(true);
+
     try {
-      const dataUrl = await toJpeg(previewCardRef.current, {
-        quality: 0.95,
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const dataUrl = await toPng(previewCardRef.current, {
+        // Alterado para toPng
+        quality: 1,
         pixelRatio: 3,
-        backgroundColor: "#000000",
+        // Não definir backgroundColor aqui permite que os cantos fiquem transparentes
       });
 
-      // Rotaciona 90° para landscape
       const img = new Image();
       img.src = dataUrl;
       await new Promise((res) => (img.onload = res));
 
       const landscape = document.createElement("canvas");
+      // Invertemos largura e altura para a rotação
       landscape.width = img.height;
       landscape.height = img.width;
+
       const ctx = landscape.getContext("2d")!;
+
+      // Garante que o canvas comece totalmente transparente
+      ctx.clearRect(0, 0, landscape.width, landscape.height);
+
+      ctx.save();
       ctx.translate(landscape.width / 2, landscape.height / 2);
       ctx.rotate((90 * Math.PI) / 180);
+      // Desenha a imagem centralizada
       ctx.drawImage(img, -img.width / 2, -img.height / 2);
+      ctx.restore();
 
       const link = document.createElement("a");
-      link.download = `carteirinha_${previewStudent["ALUNO"] || "aluno"}.jpg`;
-      link.href = landscape.toDataURL("image/jpeg", 0.95);
+      link.download = `carteirinha_${previewStudent["ALUNO"] || "aluno"}.png`;
+      link.href = landscape.toDataURL("image/png"); // Exporta como PNG
       link.click();
     } catch (err) {
-      console.error("Erro ao gerar JPG:", err);
-      NotifierManager.error("Falha ao gerar a imagem.");
+      console.error("Erro ao gerar imagem:", err);
     } finally {
-      setDownloadingJpg(false);
-    }
+    // 2. Volta a sombra para a tela do usuário
+    setIsExporting(false);
+    setDownloadingJpg(false);
+  }
   };
 
   // ─── UPLOAD PLANILHA ──────────────────────────────────────────────────────
@@ -413,7 +438,10 @@ const handleRefreshFromDB = async () => {
         const alunoIds = await syncAlunos(json);
         console.log("📌 retorno syncAlunos:", alunoIds);
         localStorage.setItem("alunoIds", JSON.stringify(alunoIds));
-        console.log("📌 lido do localStorage:", JSON.parse(localStorage.getItem("alunoIds") || "{}"));
+        console.log(
+          "📌 lido do localStorage:",
+          JSON.parse(localStorage.getItem("alunoIds") || "{}"),
+        );
 
         const qrMap: Record<string, string> = {};
         for (const student of json) {
@@ -503,6 +531,7 @@ const handleRefreshFromDB = async () => {
             photoUrl={previewPhotoUrl}
             cardAno={cardAno}
             cardValorPerda={cardValorPerda}
+            isExporting={isExporting}
           />
         </PreviewWrapper>
 
@@ -576,7 +605,7 @@ const handleRefreshFromDB = async () => {
                 </PreviewLabel>
                 <ActionButtons>
                   <DownloadJpgBtn
-                    onClick={handleDownloadJpg}
+                    onClick={handleDownloadPng}
                     disabled={downloadingJpg}
                   >
                     {downloadingJpg ? "⏳ Gerando..." : "💾 Baixar como JPG"}
@@ -800,19 +829,24 @@ const handleRefreshFromDB = async () => {
 
 // ─── STYLED COMPONENTS ────────────────────────────────────────────────────────
 
-const PreviewCardContainer = styled.div`
+const PreviewCardContainer = styled.div<{ $isExporting?: boolean }>`
   width: 500px;
   border-radius: 28px;
   position: relative;
   overflow: hidden;
   background: linear-gradient(135deg, #000000 0%, #919191 55%, #000000 100%);
-  box-shadow: 0 7px 10px rgba(0, 0, 0, 0.4);
   font-family: Arial, sans-serif;
+  margin-bottom: 16px;
+
+  /* Aplica a sombra apenas se NÃO estiver exportando */
+  box-shadow: ${(props) =>
+    props.$isExporting ? "none" : "0 7px 10px rgba(0, 0, 0, 0.4)"};
+
   @media (max-width: 540px) {
     width: 100%;
   }
-  margin-bottom: 16px;
 `;
+
 const HeaderArea = styled.div`
   display: flex;
   align-items: center;
