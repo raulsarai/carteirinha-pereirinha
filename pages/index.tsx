@@ -71,7 +71,9 @@ const CardPreview = React.forwardRef<
   const [qrUrl, setQrUrl] = useState("");
 
   useEffect(() => {
-    QRCode.toDataURL(student["Nº Matric"] || student["CPF"] || "000").then(
+    const qrData = `${student["Nº Matric"] || student["CPF"] || "000"}/${cardAno}`;
+
+    QRCode.toDataURL(qrData).then(
       setQrUrl,
     );
   }, [student]);
