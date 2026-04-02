@@ -4,7 +4,7 @@ import {
   getPhotos,
   syncAlunos,
 } from "@/lib/photos";
-import { toJpeg, toPng } from "html-to-image";
+import { toCanvas, toJpeg, toPng } from "html-to-image";
 import dynamic from "next/dynamic";
 import QRCode from "qrcode";
 import React, { useEffect, useRef, useState } from "react";
@@ -12,6 +12,7 @@ import styled from "styled-components";
 import * as XLSX from "xlsx";
 import EditAlunoModal from "../components/EditAlunoModal";
 import PhotoSession, { sanitizeChave } from "../components/PhotoSession";
+import JSZip from "jszip";
 
 const PdfDownloadButton = dynamic(
   () => import("../components/PdfDownloadButton"),
@@ -67,16 +68,24 @@ const CardPreview = React.forwardRef<
     cardValorPerda: string;
     isExporting?: boolean;
   }
->(({ student, photoUrl, cardAno, cardValorPerda,isExporting }, ref) => {
+>(({ student, photoUrl, cardAno, cardValorPerda, isExporting }, ref) => {
   const [qrUrl, setQrUrl] = useState("");
 
   useEffect(() => {
-    const qrData = `${student["Nº Matric"] || student["CPF"] || "000"}/${cardAno}`;
+    // 1. Unimos a Matrícula (ou CPF) com o Ano de Vigência
+    const identificador = student["Nº Matric"] || student["CPF"] || "000";
+    const qrData = `${identificador}/${cardAno}`;
 
-    QRCode.toDataURL(qrData).then(
-      setQrUrl,
-    );
-  }, [student]);
+    // 2. Geramos o QR Code com o novo dado
+    QRCode.toDataURL(qrData, {
+      margin: 1,
+      width: 200,
+      color: {
+        dark: "#000000",
+        light: "#ffffff",
+      },
+    }).then(setQrUrl);
+  }, [student, cardAno]); // IMPORTANTE: cardAno adicionado aqui!
 
   return (
     <PreviewCardContainer ref={ref} $isExporting={isExporting}>
@@ -177,7 +186,93 @@ export default function CarteirinhaGenerator() {
   const [isDeletingAll, setIsDeletingAll] = useState(false);
 
   const [isExporting, setIsExporting] = useState(false);
+  const [exportingBatch, setExportingBatch] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
+  
+
+const handleExportZipGrafica = async () => {
+  if (data.length === 0 || !previewCardRef.current) return;
+  
+  const confirmado = confirm(`Gerar lote para gráfica (${data.length} alunos) com 10% de sangria?`);
+  if (!confirmado) return;
+
+  setExportingBatch(true);
+  setIsExporting(true); // Ativa modo de exportação (remove bordas/sombras na tela)
+  
+  const zip = new JSZip();
+  const folder = zip.folder(`LOTE_GRAFICA_${cardAno}`);
+
+  try {
+    for (let i = 0; i < data.length; i++) {
+      const student = data[i];
+      if (!student) continue;
+
+      setExportProgress(Math.round(((i + 1) / data.length) * 100));
+
+      // 1. Atualiza o preview e espera o render
+      setPreviewStudent(student);
+      await new Promise(res => setTimeout(res, 400)); 
+
+      // 2. Captura o card que está na tela
+      const cardCanvas = await toCanvas(previewCardRef.current, {
+        pixelRatio: 3,
+      });
+
+      // 3. Criamos o Canvas Final com 10% de aumento (SANGRE)
+      const finalCanvas = document.createElement("canvas");
+      finalCanvas.width = cardCanvas.width * 1.10; // 10% maior em largura
+      finalCanvas.height = cardCanvas.height * 1.10; // 10% maior em altura
+      
+      const ctx = finalCanvas.getContext("2d")!;
+
+      // 4. Desenha o fundo (Sangria) manualmente no Canvas maior
+      // Usamos o mesmo gradiente do CSS para não haver emenda
+      const gradient = ctx.createLinearGradient(0, 0, finalCanvas.width, finalCanvas.height);
+      gradient.addColorStop(0, "#000000");
+      gradient.addColorStop(0.55, "#919191");
+      gradient.addColorStop(1, "#000000");
+      
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+
+      // 5. Centraliza o card capturado dentro do Canvas maior
+      const x = (finalCanvas.width - cardCanvas.width) / 2;
+      const y = (finalCanvas.height - cardCanvas.height) / 2;
+      ctx.drawImage(cardCanvas, x, y);
+
+      // 6. Rotação Paisagem (Landscape)
+      const landscape = document.createElement("canvas");
+      landscape.width = finalCanvas.height;
+      landscape.height = finalCanvas.width;
+      const lCtx = landscape.getContext("2d")!;
+      
+      lCtx.translate(landscape.width / 2, landscape.height / 2);
+      lCtx.rotate((90 * Math.PI) / 180);
+      lCtx.drawImage(finalCanvas, -finalCanvas.width / 2, -finalCanvas.height / 2);
+
+      // 7. Salva como JPG de alta qualidade
+      const imgData = landscape.toDataURL("image/jpeg", 0.98).split(',')[1];
+      const nomeLimpo = (student["ALUNO"] || `aluno_${i}`).trim().replace(/[/\\?%*:|"<Point>]/g, "-");
+      folder?.file(`${nomeLimpo}.jpg`, imgData, {base64: true});
+    }
+
+    const content = await zip.generateAsync({type: "blob"});
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(content);
+    link.download = `LOTE_GRAFICA_PEREIRINHA_${cardAno}.zip`;
+    link.click();
+
+    NotifierManager.success("Lote gerado com sucesso!");
+  } catch (err) {
+    console.error("Erro no lote:", err);
+    NotifierManager.error("Erro ao gerar arquivos.");
+  } finally {
+    setExportingBatch(false);
+    setIsExporting(false);
+    setPreviewStudent(null);
+  }
+};
   useEffect(() => {
     const savedData = localStorage.getItem("pereirinha_data");
     const savedQrCodes = localStorage.getItem("pereirinha_qrcodes");
@@ -192,10 +287,32 @@ export default function CarteirinhaGenerator() {
     if (savedValor) setCardValorPerda(savedValor);
   }, []);
 
+  // Dentro do CarteirinhaGenerator
   useEffect(() => {
-    if (data.length === 0) return;
+    if (data.length > 0) {
+      const atualizarLoteQRCodes = async () => {
+        const novoQrMap: Record<string, string> = {};
+        for (const student of data) {
+          const chave = sanitizeChave(student["Nº Matric"] || student["CPF"]);
+          const id = student["Nº Matric"] || student["CPF"] || "sem-id";
+          const qrData = `${id}/${cardAno}`;
+          novoQrMap[chave] = await QRCode.toDataURL(qrData);
+        }
+        setQrCodes(novoQrMap);
+        localStorage.setItem("pereirinha_qrcodes", JSON.stringify(novoQrMap));
+      };
+
+      atualizarLoteQRCodes();
+    }
+  }, [cardAno]); // Sempre que o ano mudar, regera todos os QRs do lote
+
+  useEffect(() => {
+    // Filtra o array para garantir que não existam itens nulos antes de processar
+    const validData = data.filter((s) => s !== null && s !== undefined);
+    if (validData.length === 0) return;
+
     const syncFotos = async () => {
-      const alunosRef = data.map((s: any) => ({
+      const alunosRef = validData.map((s: any) => ({
         matricula: s["Nº Matric"] || null,
         cpf: s["CPF"] || null,
       }));
@@ -220,11 +337,15 @@ export default function CarteirinhaGenerator() {
     .slice(0, 6);
 
   const filteredAlunos = data.filter((s) => {
+    if (!s) return false;
+
     const term = searchAlunos.toLowerCase().trim();
     if (!term) return true;
+
     const nome = String(s["ALUNO"] || "").toLowerCase();
     const matricula = String(s["Nº Matric"] || "").toLowerCase();
     const cpf = String(s["CPF"] || "").toLowerCase();
+
     return (
       nome.includes(term) || matricula.includes(term) || cpf.includes(term)
     );
@@ -247,6 +368,22 @@ export default function CarteirinhaGenerator() {
 
   const normalizeCpf = (val: unknown): string =>
     String(val ?? "").replace(/\D/g, "");
+
+  const handleAddManual = () => {
+    // Criamos um objeto vazio seguindo a estrutura da sua planilha
+    const novoAluno = {
+      ALUNO: "Novo Aluno",
+      "RG aluno": "",
+      CPF: "",
+      "Data Nasc": "",
+      Responsavel: "",
+      "Nº Matric": "",
+      Categoria: "",
+    };
+
+    // Abrimos o modal passando um ID nulo ou flag de 'novo'
+    setEditingAluno({ student: novoAluno, id: "" });
+  };
 
   const handleRefreshFromDB = async () => {
     setIsRefreshing(true);
@@ -364,8 +501,7 @@ export default function CarteirinhaGenerator() {
     setDownloadingJpg(true);
 
     try {
-
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const dataUrl = await toPng(previewCardRef.current, {
         // Alterado para toPng
@@ -402,10 +538,10 @@ export default function CarteirinhaGenerator() {
     } catch (err) {
       console.error("Erro ao gerar imagem:", err);
     } finally {
-    // 2. Volta a sombra para a tela do usuário
-    setIsExporting(false);
-    setDownloadingJpg(false);
-  }
+      // 2. Volta a sombra para a tela do usuário
+      setIsExporting(false);
+      setDownloadingJpg(false);
+    }
   };
 
   // ─── UPLOAD PLANILHA ──────────────────────────────────────────────────────
@@ -677,6 +813,21 @@ export default function CarteirinhaGenerator() {
 
         <ImportRow>
           {/* IMPORTAR PLANILHA — só aparece se não há dados */}
+          <button
+            onClick={handleAddManual}
+            style={{
+              width: "100%",
+              padding: "14px 24px",
+              background: "#28a745", // Verde para indicar adição
+              color: "#fff",
+              borderRadius: "8px",
+              fontWeight: "bold",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            ➕ Cadastrar Aluno Manualmente
+          </button>
           {data.length === 0 && (
             <>
               <input
@@ -707,6 +858,23 @@ export default function CarteirinhaGenerator() {
 
         {data.length > 0 && (
           <ActionsRow>
+            <button
+              onClick={handleExportZipGrafica}
+              disabled={exportingBatch}
+              style={{
+                padding: "14px 24px",
+                background: exportingBatch ? "#6c757d" : "#e67e22", // Laranja para diferenciar do PDF
+                color: "#fff",
+                borderRadius: "8px",
+                fontWeight: "bold",
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              {exportingBatch
+                ? `⏳ Processando (${exportProgress}%)...`
+                : "📦 Gerar Lote para Gráfica (.ZIP)"}
+            </button>
             <PhotoButton onClick={() => setShowPhotoSession(true)}>
               📷 Iniciar Sessão de Fotos ({data.length} alunos)
               {Object.keys(sessionPhotos).length > 0 && (
@@ -732,6 +900,7 @@ export default function CarteirinhaGenerator() {
       {data.length > 0 && (
         <AlunosSection>
           <SectionTitle>👥 Alunos Cadastrados</SectionTitle>
+
           <SearchWrapper>
             <SearchIcon>🔍</SearchIcon>
             <SearchInput
@@ -753,42 +922,65 @@ export default function CarteirinhaGenerator() {
 
           <AlunosList>
             {filteredAlunos.map((student, i) => {
+              // PROTEÇÃO 1: Pula renderização se o estudante for nulo (evita crash ao excluir)
+              if (!student) return null;
+
               const alunoIds = JSON.parse(
                 localStorage.getItem("alunoIds") || "{}",
               );
-              const chave = sanitizeChave(
-                student["Nº Matric"] || student["CPF"],
-              );
+
+              // PROTEÇÃO 2: Acesso seguro às propriedades com Optional Chaining (?.)
+              const matricula = student?.["Nº Matric"] || "";
+              const cpf = student?.["CPF"] || "";
+              const nome = student?.["ALUNO"] || "Sem Nome";
+              const categoria = student?.["Categoria"] || "—";
+
+              const chave = sanitizeChave(matricula || cpf);
               const alunoId = alunoIds[chave];
               const temFoto = !!sessionPhotos[chave];
+
               return (
-                <AlunoRow key={i}>
+                <AlunoRow key={`${chave}-${i}`}>
                   <AlunoInfo>
-                    <AlunoNome>{student["ALUNO"]}</AlunoNome>
+                    <AlunoNome>{nome}</AlunoNome>
                     <AlunoSub>
-                      {student["Nº Matric"]
-                        ? `Mat: ${student["Nº Matric"]}`
-                        : `CPF: ${student["CPF"] || "—"}`}
+                      {matricula
+                        ? `Mat: ${matricula}`
+                        : cpf
+                        ? `CPF: ${cpf}`
+                        : "Sem documento"}
                       {" · "}
-                      {student["Categoria"] || "—"}
+                      {categoria}
                       {" · "}
-                      <span style={{ color: temFoto ? "#28a745" : "#aaa" }}>
+                      <span
+                        style={{
+                          color: temFoto ? "#28a745" : "#aaa",
+                          fontWeight: temFoto ? "bold" : "normal",
+                        }}
+                      >
                         {temFoto ? "✅ com foto" : "⬜ sem foto"}
                       </span>
                     </AlunoSub>
                   </AlunoInfo>
+
                   <EditBtn
-                    onClick={() => setEditingAluno({ student, id: alunoId })}
-                    title="Editar aluno"
+                    onClick={() =>
+                      setEditingAluno({ student, id: alunoId || "" })
+                    }
+                    title="Editar ou Excluir aluno"
                   >
                     ✏️
                   </EditBtn>
                 </AlunoRow>
               );
             })}
+
+            {/* Estado vazio para busca sem resultados */}
             {filteredAlunos.length === 0 && (
               <EmptySearch>
-                Nenhum aluno encontrado para "{searchAlunos}"
+                {searchAlunos
+                  ? `Nenhum aluno encontrado para "${searchAlunos}"`
+                  : "Nenhum aluno cadastrado no momento."}
               </EmptySearch>
             )}
           </AlunosList>
@@ -802,12 +994,25 @@ export default function CarteirinhaGenerator() {
           alunoId={editingAluno.id}
           onClose={() => setEditingAluno(null)}
           onSave={(updated) => {
-            const newData = data.map((s) =>
-              s["ALUNO"] === editingAluno.student["ALUNO"] ? updated : s,
-            );
-            setData(newData);
-            localStorage.setItem("pereirinha_data", JSON.stringify(newData));
-            setEditingAluno(null);
+            if (!updated) {
+              // Lógica de exclusão: remove o item nulo
+              setData((prev) =>
+                prev.filter((s) => s && s.id !== editingAluno?.id),
+              );
+            } else {
+              if (!editingAluno?.id) {
+                // É UM NOVO CADASTRO: Adiciona no topo da lista
+                setData((prev) => [updated, ...prev]);
+              } else {
+                // É UMA EDIÇÃO: Substitui o item antigo
+                setData((prev) =>
+                  prev.map((s) =>
+                    s && s.id === editingAluno.id ? updated : s,
+                  ),
+                );
+              }
+            }
+            setEditingAluno(null); // Fecha o modal imediatamente
           }}
         />
       )}
@@ -831,21 +1036,44 @@ export default function CarteirinhaGenerator() {
 
 // ─── STYLED COMPONENTS ────────────────────────────────────────────────────────
 
+const OffscreenExportContainer = styled.div`
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+`;
+
+// Card específico para a gráfica (sem bordas arredondadas visíveis e com sangria)
+const GraficaCardStyle = styled.div`
+  width: 259.6pt; /* 85.6mm + 6mm sangria */
+  height: 170pt; /* 54mm + 6mm sangria */
+  position: relative;
+  background: linear-gradient(135deg, #000000 0%, #919191 55%, #000000 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+`;
+
 const PreviewCardContainer = styled.div<{ $isExporting?: boolean }>`
   width: 500px;
-  border-radius: 28px;
+  height: 310px; /* Altura fixa para manter proporção de cartão */
+  /* Remove arredondamento na exportação para a gráfica */
+  border-radius: ${props => props.$isExporting ? "0" : "28px"};
   position: relative;
   overflow: hidden;
   background: linear-gradient(135deg, #000000 0%, #919191 55%, #000000 100%);
   font-family: Arial, sans-serif;
   margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 
-  /* Aplica a sombra apenas se NÃO estiver exportando */
-  box-shadow: ${(props) =>
-    props.$isExporting ? "none" : "0 7px 10px rgba(0, 0, 0, 0.4)"};
+  /* Remove sombra na exportação para evitar manchas pretas */
+  box-shadow: ${props => props.$isExporting ? "none" : "0 7px 10px rgba(0, 0, 0, 0.4)"};
 
   @media (max-width: 540px) {
     width: 100%;
+    height: auto;
   }
 `;
 

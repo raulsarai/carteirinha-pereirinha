@@ -126,6 +126,9 @@ export async function uploadPhoto(
 
 
 
+
+
+
 export async function getPhotos(
   alunos: { matricula?: string; cpf?: string }[]
 ): Promise<Record<string, string>> {
