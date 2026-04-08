@@ -108,8 +108,15 @@ const CardPreview = React.forwardRef<
         )}
         <Fields>
           <Field>
-            <Label>Nome:</Label>
-            <Value>{student["ALUNO"]}</Value>
+            {!isExporting && <Label>Nome:</Label>}
+            <Value
+              style={{
+                marginLeft: isExporting ? "0" : "5px",
+                fontSize: isExporting ? "8px" : "10px", // Redução de 2px na exportação
+              }}
+            >
+              {student["ALUNO"]}
+            </Value>
           </Field>
           <Row>
             <Field style={{ flex: 1 }}>
@@ -189,16 +196,14 @@ export default function CarteirinhaGenerator() {
   const [exportingBatch, setExportingBatch] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
-  
-
 const handleExportZipGrafica = async () => {
   if (data.length === 0 || !previewCardRef.current) return;
   
-  const confirmado = confirm(`Gerar lote para gráfica (${data.length} alunos) com 10% de sangria?`);
+  const confirmado = confirm(`Gerar imagens para gráfica (${data.length} alunos) com 10% de sangria?`);
   if (!confirmado) return;
 
   setExportingBatch(true);
-  setIsExporting(true); // Ativa modo de exportação (remove bordas/sombras na tela)
+  setIsExporting(true); // Ativa modo de exportação para mudar o layout do card
   
   const zip = new JSZip();
   const folder = zip.folder(`LOTE_GRAFICA_${cardAno}`);
@@ -210,24 +215,23 @@ const handleExportZipGrafica = async () => {
 
       setExportProgress(Math.round(((i + 1) / data.length) * 100));
 
-      // 1. Atualiza o preview e espera o render
+      // 1. Atualiza o preview e aguarda renderização (QR Code e Foto)
       setPreviewStudent(student);
       await new Promise(res => setTimeout(res, 400)); 
 
-      // 2. Captura o card que está na tela
+      // 2. Captura o card que está na tela como Canvas
       const cardCanvas = await toCanvas(previewCardRef.current, {
         pixelRatio: 3,
       });
 
-      // 3. Criamos o Canvas Final com 10% de aumento (SANGRE)
+      // 3. Criamos o Canvas Final (SANGRE) com 10% de aumento
       const finalCanvas = document.createElement("canvas");
-      finalCanvas.width = cardCanvas.width * 1.10; // 10% maior em largura
-      finalCanvas.height = cardCanvas.height * 1.10; // 10% maior em altura
+      finalCanvas.width = cardCanvas.width * 1.10; 
+      finalCanvas.height = cardCanvas.height * 1.10;
       
       const ctx = finalCanvas.getContext("2d")!;
 
-      // 4. Desenha o fundo (Sangria) manualmente no Canvas maior
-      // Usamos o mesmo gradiente do CSS para não haver emenda
+      // 4. Desenha o fundo (Sangria) manualmente para garantir integridade
       const gradient = ctx.createLinearGradient(0, 0, finalCanvas.width, finalCanvas.height);
       gradient.addColorStop(0, "#000000");
       gradient.addColorStop(0.55, "#919191");
@@ -236,12 +240,12 @@ const handleExportZipGrafica = async () => {
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
 
-      // 5. Centraliza o card capturado dentro do Canvas maior
+      // 5. Centraliza o card capturado dentro da área maior
       const x = (finalCanvas.width - cardCanvas.width) / 2;
       const y = (finalCanvas.height - cardCanvas.height) / 2;
       ctx.drawImage(cardCanvas, x, y);
 
-      // 6. Rotação Paisagem (Landscape)
+      // 6. Rotação Paisagem (Landscape) para o formato da gráfica
       const landscape = document.createElement("canvas");
       landscape.width = finalCanvas.height;
       landscape.height = finalCanvas.width;
@@ -251,7 +255,7 @@ const handleExportZipGrafica = async () => {
       lCtx.rotate((90 * Math.PI) / 180);
       lCtx.drawImage(finalCanvas, -finalCanvas.width / 2, -finalCanvas.height / 2);
 
-      // 7. Salva como JPG de alta qualidade
+      // 7. Salva no ZIP como JPG de alta qualidade
       const imgData = landscape.toDataURL("image/jpeg", 0.98).split(',')[1];
       const nomeLimpo = (student["ALUNO"] || `aluno_${i}`).trim().replace(/[/\\?%*:|"<Point>]/g, "-");
       folder?.file(`${nomeLimpo}.jpg`, imgData, {base64: true});
@@ -273,6 +277,7 @@ const handleExportZipGrafica = async () => {
     setPreviewStudent(null);
   }
 };
+
   useEffect(() => {
     const savedData = localStorage.getItem("pereirinha_data");
     const savedQrCodes = localStorage.getItem("pereirinha_qrcodes");
@@ -1058,7 +1063,7 @@ const PreviewCardContainer = styled.div<{ $isExporting?: boolean }>`
   width: 500px;
   height: 310px; /* Altura fixa para manter proporção de cartão */
   /* Remove arredondamento na exportação para a gráfica */
-  border-radius: ${props => props.$isExporting ? "0" : "28px"};
+  border-radius: ${(props) => (props.$isExporting ? "0" : "28px")};
   position: relative;
   overflow: hidden;
   background: linear-gradient(135deg, #000000 0%, #919191 55%, #000000 100%);
@@ -1069,7 +1074,8 @@ const PreviewCardContainer = styled.div<{ $isExporting?: boolean }>`
   justify-content: space-between;
 
   /* Remove sombra na exportação para evitar manchas pretas */
-  box-shadow: ${props => props.$isExporting ? "none" : "0 7px 10px rgba(0, 0, 0, 0.4)"};
+  box-shadow: ${(props) =>
+    props.$isExporting ? "none" : "0 7px 10px rgba(0, 0, 0, 0.4)"};
 
   @media (max-width: 540px) {
     width: 100%;
