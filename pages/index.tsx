@@ -863,7 +863,7 @@ const handleExportZipGrafica = async () => {
 
         {data.length > 0 && (
           <ActionsRow>
-            <button
+            {/* <button
               onClick={handleExportZipGrafica}
               disabled={exportingBatch}
               style={{
@@ -879,7 +879,7 @@ const handleExportZipGrafica = async () => {
               {exportingBatch
                 ? `⏳ Processando (${exportProgress}%)...`
                 : "📦 Gerar Lote para Gráfica (.ZIP)"}
-            </button>
+            </button> */}
             <PhotoButton onClick={() => setShowPhotoSession(true)}>
               📷 Iniciar Sessão de Fotos ({data.length} alunos)
               {Object.keys(sessionPhotos).length > 0 && (

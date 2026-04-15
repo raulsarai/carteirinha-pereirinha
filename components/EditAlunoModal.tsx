@@ -5,6 +5,31 @@ import styled from "styled-components";
 // Importe a função de criar aluno que você deve ter no seu lib
 import { updateAluno, createAluno, deleteAluno } from "../lib/alunos";
 
+const brToIsoDate = (value: string) => {
+  if (!value) return null;
+
+  const v = value.trim();
+
+  // já está no formato ISO
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+
+  const match = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+
+  const [, dd, mm, yyyy] = match;
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const isoToBrDate = (value: string) => {
+  if (!value) return "";
+
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return value;
+
+  const [, yyyy, mm, dd] = match;
+  return `${dd}/${mm}/${yyyy}`;
+};
+
 type Props = {
   aluno: any;
   alunoId: string; // No cadastro novo, isso virá como ""
@@ -27,7 +52,9 @@ export default function EditAlunoModal({
     nome: aluno["ALUNO"] || "",
     rg: aluno["RG aluno"] || "",
     cpf: aluno["CPF"] || "",
-    data_nascimento: aluno["Data Nasc"] || "",
+    data_nascimento: isoToBrDate(
+      aluno.data_nascimento || aluno["Data Nasc"] || "",
+    ),
     responsavel: aluno["Responsavel"] || "",
     categoria: aluno["Categoria"] || "",
   });
@@ -58,58 +85,59 @@ export default function EditAlunoModal({
     }
   }
 
-async function handleSave() {
-  if (!form.nome.trim()) {
-    setError("O nome do atleta é obrigatório.");
-    return;
-  }
-
-  setSaving(true);
-  setError(null);
-
-  try {
-    const payload = {
-      matricula: form.matricula || null,
-      nome: form.nome,
-      rg: form.rg || null,
-      cpf: form.cpf || null,
-      responsavel: form.responsavel || null,
-      categoria: form.categoria || null,
-      data_nascimento: form.data_nascimento || null,
-    };
-
-    let result;
-
-    if (isNew) {
-      result = await createAluno(payload);
-    } else {
-      result = await updateAluno(alunoId, payload);
+  async function handleSave() {
+    if (!form.nome.trim()) {
+      setError("O nome do atleta é obrigatório.");
+      return;
     }
 
-    // CRUCIAL: Garantir que o objeto retornado tenha as chaves em MAIÚSCULO 
-    // para bater com o que o seu Preview e Lista esperam
-    const alunoFormatado = {
-      ...aluno, // mantém fotos e outros metadados
-      id: isNew ? result.id : alunoId,
-      "ALUNO": form.nome,
-      "Nº Matric": form.matricula,
-      "RG aluno": form.rg,
-      "CPF": form.cpf,
-      "Data Nasc": form.data_nascimento,
-      "Responsavel": form.responsavel,
-      "Categoria": form.categoria,
-    };
+    setSaving(true);
+    setError(null);
 
-    onSave(alunoFormatado);
-    onClose();
-  } catch (err: any) {
-    // Se o erro for apenas visual mas o aluno salvou, onClose() resolveria,
-    // mas vamos tratar para não exibir "null"
-    setError(err?.message || "Ocorreu um erro ao salvar.");
-  } finally {
-    setSaving(false);
+    try {
+      const payload = {
+        matricula: form.matricula || null,
+        nome: form.nome,
+        rg: form.rg || null,
+        cpf: form.cpf || null,
+        responsavel: form.responsavel || null,
+        categoria: form.categoria || null,
+        data_nascimento: brToIsoDate(form.data_nascimento),
+      };
+
+      let result;
+
+      if (isNew) {
+        result = await createAluno(payload);
+      } else {
+        result = await updateAluno(alunoId, payload);
+      }
+
+      // CRUCIAL: Garantir que o objeto retornado tenha as chaves em MAIÚSCULO
+      // para bater com o que o seu Preview e Lista esperam
+      const alunoFormatado = {
+        ...aluno,
+        id: isNew ? result.id : alunoId,
+        ALUNO: form.nome,
+        "Nº Matric": form.matricula,
+        "RG aluno": form.rg,
+        CPF: form.cpf,
+        "Data Nasc": form.data_nascimento, // mantêm dd/mm/yyyy na UI
+        Responsavel: form.responsavel,
+        Categoria: form.categoria,
+        data_nascimento: brToIsoDate(form.data_nascimento), // se quiser guardar no objeto também
+      };
+
+      onSave(alunoFormatado);
+      onClose();
+    } catch (err: any) {
+      // Se o erro for apenas visual mas o aluno salvou, onClose() resolveria,
+      // mas vamos tratar para não exibir "null"
+      setError(err?.message || "Ocorreu um erro ao salvar.");
+    } finally {
+      setSaving(false);
+    }
   }
-}
 
   return (
     <Overlay onClick={onClose}>
@@ -220,7 +248,9 @@ const DeleteBtn = styled.button`
     background: #ff4d4d;
     color: #fff;
   }
-  &:disabled { opacity: 0.5; }
+  &:disabled {
+    opacity: 0.5;
+  }
 `;
 
 const Overlay = styled.div`
