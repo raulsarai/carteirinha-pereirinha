@@ -123,9 +123,167 @@ export async function uploadPhoto(
   return data.publicUrl
 }
 
+export const aplicarTimestampEmLote = async () => {
+  console.log("🚀 Iniciando repadronização com timestamp...");
+  
+  const { data: fotos, error } = await supabase
+    .from('carteirinha_fotos')
+    .select('*');
 
+  if (error || !fotos) return;
 
+  const timestampComum = Date.now();
 
+  for (const registro of fotos) {
+    const antigaPath = registro.storage_path;
+    const matricula = registro.matricula;
+    
+    // Define o novo nome com o timestamp para evitar cache
+    const novoPath = `${matricula}_v${timestampComum}.jpg`;
+
+    if (antigaPath === novoPath) continue;
+
+    // 1. Move o arquivo físico
+    const { error: moveError } = await supabase.storage
+      .from('fotos-carteirinhas')
+      .move(antigaPath, novoPath);
+
+    if (moveError) {
+      console.error(`❌ Erro ao mover ${matricula}:`, moveError.message);
+      continue;
+    }
+
+    // 2. Pega a nova URL pública
+    const { data: publicUrlData } = supabase.storage
+      .from('fotos-carteirinhas')
+      .getPublicUrl(novoPath);
+
+    // 3. Atualiza o banco de dados
+    await supabase
+      .from('carteirinha_fotos')
+      .update({ 
+        storage_path: novoPath, 
+        public_url: publicUrlData.publicUrl 
+      })
+      .eq('matricula', matricula);
+      
+    console.log(`✅ ${matricula} agora é ${novoPath}`);
+  }
+  
+  alert("Todas as fotos agora possuem timestamp!");
+};
+
+export const repadronizarFotosComTimestamp = async () => {
+  console.log("🚀 Iniciando repadronização completa...");
+
+  // 1. Busca todos os registros (mesmo os que estão com path nulo)
+  const { data: registros, error } = await supabase
+    .from('carteirinha_fotos')
+    .select('matricula');
+
+  if (error || !registros) {
+    console.error("❌ Erro ao buscar registros no banco:", error);
+    return;
+  }
+
+  for (const registro of registros) {
+    const matricula = registro.matricula;
+    const antigoNomePuro = `${matricula}.jpg`; // O padrão que você deixou agora
+    const novoTimestamp = Date.now();
+    const novoPathComTimestamp = `${matricula}_v${novoTimestamp}.jpg`;
+
+    console.log(`🔄 Processando ${matricula}...`);
+
+    // 2. Tenta renomear o arquivo físico no Storage
+    const { error: moveError } = await supabase.storage
+      .from('fotos-carteirinhas')
+      .move(antigoNomePuro, novoPathComTimestamp);
+
+    if (moveError) {
+      // Se der erro 404, significa que o arquivo físico '000-000.jpg' não existe
+      console.warn(`⚠️ Arquivo ${antigoNomePuro} não encontrado no Storage. Pulando...`);
+      continue;
+    }
+
+    // 3. Se moveu com sucesso, gera a nova URL pública
+    const { data: publicUrlData } = supabase.storage
+      .from('fotos-carteirinhas')
+      .getPublicUrl(novoPathComTimestamp);
+
+    // 4. Atualiza o banco de dados com os novos dados
+    const { error: updateError } = await supabase
+      .from('carteirinha_fotos')
+      .update({
+        storage_path: novoPathComTimestamp,
+        public_url: publicUrlData.publicUrl
+      })
+      .eq('matricula', matricula);
+
+    if (updateError) {
+      console.error(`❌ Erro ao atualizar banco para ${matricula}:`, updateError.message);
+    } else {
+      console.log(`✅ ${matricula} atualizada para ${novoPathComTimestamp}`);
+    }
+  }
+
+  alert("Repadronização concluída! As imagens agora possuem timestamps e estão vinculadas.");
+};
+
+export const migrarNomesParaMatricula = async () => {
+  console.log("🚀 Iniciando padronização de arquivos...");
+  
+  // 1. Busca todos os registros de fotos
+  const { data: fotos, error } = await supabase
+    .from('carteirinha_fotos')
+    .select('matricula, storage_path');
+
+  if (error || !fotos) {
+    console.error("❌ Erro ao buscar fotos:", error);
+    return;
+  }
+
+  for (const registro of fotos) {
+    const antigaPath = registro.storage_path; // ex: "026-027_v1773786794676.jpg"
+    const matricula = registro.matricula;
+    
+    // Define o novo padrão: apenas MATRICULA.jpg
+    const novoPath = `${matricula}.jpg`;
+
+    // Se já estiver no padrão, pula
+    if (antigaPath === novoPath) continue;
+
+    console.log(`🔄 Migrando ${matricula}...`);
+
+    // 2. Move (Renomeia) o arquivo físico no Storage
+    const { error: moveError } = await supabase.storage
+      .from('fotos-carteirinhas')
+      .move(antigaPath, novoPath);
+
+    if (moveError) {
+      console.error(`⚠️ Erro ao mover arquivo de ${matricula}:`, moveError.message);
+      continue;
+    }
+
+    // 3. Atualiza as referências no Banco de Dados
+    const { data: publicUrlData } = supabase.storage
+      .from('fotos-carteirinhas')
+      .getPublicUrl(novoPath);
+
+    const { error: dbError } = await supabase
+      .from('carteirinha_fotos')
+      .update({ 
+        storage_path: novoPath, 
+        public_url: publicUrlData.publicUrl 
+      })
+      .eq('matricula', matricula); // Uso da matrícula como chave única
+
+    if (dbError) {
+      console.error(`❌ Erro no banco para ${matricula}:`, dbError.message);
+    }
+  }
+  
+  alert("Padronização concluída com sucesso!");
+};
 
 
 
