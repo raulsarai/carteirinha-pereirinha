@@ -1,34 +1,40 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState } from "react";
 import styled from "styled-components";
+// Importe a função de criar aluno que você deve ter no seu lib
 import { updateAluno, createAluno, deleteAluno } from "../lib/alunos";
-import { uploadPhoto } from "../lib/photos";
-import { sanitizeChave } from "./PhotoSession";
 
 const brToIsoDate = (value: string) => {
   if (!value) return null;
+
   const v = value.trim();
+
+  // já está no formato ISO
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+
   const match = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!match) return null;
+
   const [, dd, mm, yyyy] = match;
   return `${yyyy}-${mm}-${dd}`;
 };
 
 const isoToBrDate = (value: string) => {
   if (!value) return "";
+
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return value;
+
   const [, yyyy, mm, dd] = match;
   return `${dd}/${mm}/${yyyy}`;
 };
 
 type Props = {
   aluno: any;
-  alunoId: string;
+  alunoId: string; // No cadastro novo, isso virá como ""
   onClose: () => void;
-  onSave: (updated: any, photoUrl?: string | null) => void;
+  onSave: (updated: any) => void;
 };
 
 export default function EditAlunoModal({
@@ -37,8 +43,8 @@ export default function EditAlunoModal({
   onClose,
   onSave,
 }: Props) {
-  const effectiveAlunoId = alunoId || aluno?.id || "";
-  const isNew = !effectiveAlunoId;
+  // Se não tem alunoId, é um cadastro novo
+  const isNew = !alunoId;
   const temMatricula = !!aluno["Nº Matric"];
 
   const [form, setForm] = useState({
@@ -56,38 +62,8 @@ export default function EditAlunoModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ─── NOVO: estado da foto ───────────────────────────────
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(
-    aluno.fotoUrl || aluno.photoUrl || null,
-  );
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const handleChange = (field: string, value: string) => {
     setForm((f) => ({ ...f, [field]: value }));
-  };
-
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      setError("Selecione um arquivo de imagem válido.");
-      return;
-    }
-
-    setPhotoFile(file);
-    setError(null);
-
-    const reader = new FileReader();
-    reader.onload = () => setPhotoPreview(reader.result as string);
-    reader.readAsDataURL(file);
-  };
-
-  const handleRemovePhotoPreview = () => {
-    setPhotoFile(null);
-    setPhotoPreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   async function handleDelete() {
@@ -99,6 +75,7 @@ export default function EditAlunoModal({
     setSaving(true);
     try {
       await deleteAluno(alunoId);
+      // Chamamos o onSave passando null ou um sinalizador de exclusão
       onSave(null);
       onClose();
     } catch (err: any) {
@@ -111,12 +88,6 @@ export default function EditAlunoModal({
   async function handleSave() {
     if (!form.nome.trim()) {
       setError("O nome do atleta é obrigatório.");
-      return;
-    }
-
-    // Se tem foto pra enviar, precisa de matrícula OU cpf pra nomear o arquivo
-    if (photoFile && !form.matricula.trim() && !form.cpf.trim()) {
-      setError("Informe a matrícula ou CPF antes de enviar a foto.");
       return;
     }
 
@@ -135,43 +106,33 @@ export default function EditAlunoModal({
       };
 
       let result;
-      let finalAlunoId = alunoId;
 
       if (isNew) {
         result = await createAluno(payload);
       } else {
-        result = await updateAluno(effectiveAlunoId, payload);
+        result = await updateAluno(alunoId, payload);
       }
 
-      // ─── NOVO: upload da foto usando a matrícula como nome do arquivo ───
-      let uploadedPhotoUrl: string | null = null;
-      if (photoFile) {
-        const chaveArquivo = form.matricula || form.cpf; // uploadPhoto sanitiza internamente
-        uploadedPhotoUrl = await uploadPhoto(
-          chaveArquivo,
-          photoFile,
-          finalAlunoId,
-          form.cpf || undefined,
-        );
-      }
-
+      // CRUCIAL: Garantir que o objeto retornado tenha as chaves em MAIÚSCULO
+      // para bater com o que o seu Preview e Lista esperam
       const alunoFormatado = {
         ...aluno,
-        id: isNew ? result.id : effectiveAlunoId,
+        id: isNew ? result.id : alunoId,
         ALUNO: form.nome,
         "Nº Matric": form.matricula,
         "RG aluno": form.rg,
         CPF: form.cpf,
-        "Data Nasc": form.data_nascimento,
+        "Data Nasc": form.data_nascimento, // mantêm dd/mm/yyyy na UI
         Responsavel: form.responsavel,
         Categoria: form.categoria,
-        data_nascimento: brToIsoDate(form.data_nascimento),
-        photoUrl: aluno.photoUrl || null,
+        data_nascimento: brToIsoDate(form.data_nascimento), // se quiser guardar no objeto também
       };
 
-      onSave(alunoFormatado, uploadedPhotoUrl);
+      onSave(alunoFormatado);
       onClose();
     } catch (err: any) {
+      // Se o erro for apenas visual mas o aluno salvou, onClose() resolveria,
+      // mas vamos tratar para não exibir "null"
       setError(err?.message || "Ocorreu um erro ao salvar.");
     } finally {
       setSaving(false);
@@ -181,35 +142,10 @@ export default function EditAlunoModal({
   return (
     <Overlay onClick={onClose}>
       <Modal onClick={(e) => e.stopPropagation()}>
+        {/* Título Dinâmico corrigido (agora dentro do ModalTitle para respeitar o estilo) */}
         <ModalTitle>
           {isNew ? "➕ Cadastrar Aluno" : "✏️ Editar Aluno"}
         </ModalTitle>
-
-        {/* ─── NOVO: bloco de upload de foto ─── */}
-        <PhotoUploadArea>
-          <PhotoPreviewBox onClick={() => fileInputRef.current?.click()}>
-            {photoPreview ? (
-              <PreviewImg src={photoPreview} alt="Foto do aluno" />
-            ) : (
-              <PhotoPlaceholder>📷 Adicionar foto</PhotoPlaceholder>
-            )}
-          </PhotoPreviewBox>
-          <PhotoActions>
-            <PhotoBtn
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {photoPreview ? "Trocar foto" : "Selecionar foto"}
-            </PhotoBtn>
-          </PhotoActions>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handlePhotoChange}
-            hidden
-          />
-        </PhotoUploadArea>
 
         <Field>
           <Label>Nome</Label>
@@ -287,7 +223,7 @@ export default function EditAlunoModal({
               🗑️ Excluir
             </DeleteBtn>
           )}
-          <div style={{ flex: 1 }} />
+          <div style={{ flex: 1 }} /> {/* Espaçador */}
           <CancelBtn onClick={onClose}>Cancelar</CancelBtn>
           <SaveBtn onClick={handleSave} disabled={saving}>
             {saving ? "Processando..." : "💾 Salvar"}
@@ -297,61 +233,6 @@ export default function EditAlunoModal({
     </Overlay>
   );
 }
-
-// ─── NOVOS ESTILOS DA FOTO ──────────────────────────────
-const PhotoUploadArea = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 14px;
-`;
-const PhotoPreviewBox = styled.div`
-  width: 72px;
-  height: 72px;
-  border-radius: 12px;
-  background: #2a2a2a;
-  border: 1px dashed #555;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  cursor: pointer;
-  flex-shrink: 0;
-`;
-const PreviewImg = styled.img`
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-`;
-const PhotoPlaceholder = styled.span`
-  font-size: 10px;
-  color: #888;
-  text-align: center;
-  padding: 4px;
-`;
-const PhotoActions = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-`;
-const PhotoBtn = styled.button`
-  padding: 6px 12px;
-  background: #0070f3;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-`;
-const PhotoRemoveBtn = styled.button`
-  padding: 6px 12px;
-  background: none;
-  color: #ff6b6b;
-  border: 1px solid #ff6b6b;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-`;
 
 const DeleteBtn = styled.button`
   padding: 10px 16px;

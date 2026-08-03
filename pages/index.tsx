@@ -182,7 +182,6 @@ export default function CarteirinhaGenerator() {
     id: string;
   } | null>(null);
   const [searchAlunos, setSearchAlunos] = useState("");
-  const [selectedAlunos, setSelectedAlunos] = useState<string[]>([]);
 
   const [searchPreview, setSearchPreview] = useState("");
   const [previewStudent, setPreviewStudent] = useState<any | null>(null);
@@ -200,28 +199,6 @@ export default function CarteirinhaGenerator() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportingBatch, setExportingBatch] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
-
-  const getAlunoSelectionKey = (student: any) =>
-    sanitizeChave(
-      student?.["Nº Matric"] || student?.["CPF"] || student?.id || "",
-    );
-
-  const toggleAlunoSelection = (student: any) => {
-    const key = getAlunoSelectionKey(student);
-    if (!key) return;
-
-    setSelectedAlunos((prev) =>
-      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
-    );
-  };
-
-  const clearAlunoSelection = () => setSelectedAlunos([]);
-
-  const selectedStudentsData = data.filter((student) =>
-    selectedAlunos.includes(getAlunoSelectionKey(student)),
-  );
-
-  const pdfData = selectedStudentsData.length > 0 ? selectedStudentsData : data;
 
   const handleExportZipGrafica = async () => {
     if (data.length === 0 || !previewCardRef.current) return;
@@ -1141,7 +1118,7 @@ export default function CarteirinhaGenerator() {
                 </PhotoButton>
 
                 <PdfDownloadButton
-                  data={pdfData}
+                  data={data}
                   qrCodes={qrCodes}
                   sessionPhotos={sessionPhotos}
                   cardAno={cardAno}
@@ -1181,20 +1158,6 @@ export default function CarteirinhaGenerator() {
             </SearchCount>
           )}
 
-          <SelectionBar>
-            <span>
-              {selectedStudentsData.length > 0
-                ? `${selectedStudentsData.length} selecionado(s) para o PDF`
-                : "Nenhum aluno selecionado — PDF sairá completo"}
-            </span>
-
-            <SelectionActions>
-              <SmallActionButton type="button" onClick={clearAlunoSelection}>
-                Limpar seleção
-              </SmallActionButton>
-            </SelectionActions>
-          </SelectionBar>
-
           <AlunosList>
             {filteredAlunos.map((student, i) => {
               if (!student) return null;
@@ -1209,62 +1172,45 @@ export default function CarteirinhaGenerator() {
               const categoria = student?.["Categoria"] || "—";
 
               const chave = sanitizeChave(matricula || cpf);
-              const alunoId = student?.id || alunoIds[chave] || "";
+              const alunoId = alunoIds[chave];
+
+              // CORREÇÃO DO ERRO: Usar sessionPhotos em vez de photos
               const fotoUrl = sessionPhotos[chave];
               const temFoto = !!fotoUrl;
 
-              const selectionKey = getAlunoSelectionKey(student);
-              const isSelected = selectedAlunos.includes(selectionKey);
-
               return (
                 <AlunoRow key={`${chave}-${i}`}>
-                  <AlunoLeft>
-                    <AlunoCheckbox
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleAlunoSelection(student)}
-                    />
+                  <AlunoContent>
+                    {/* Avatar com foto ou ícone de usuário */}
+                    <AlunoAvatar src={fotoUrl} />
 
-                    <AlunoContent>
-                      <AlunoAvatar src={fotoUrl} />
-
-                      <AlunoInfo>
-                        <AlunoNome>{nome}</AlunoNome>
-                        <AlunoSub>
-                          {matricula
-                            ? `Mat: ${matricula}`
-                            : cpf
-                            ? `CPF: ${cpf}`
-                            : "Sem doc"}
-                          {" · "}
-                          {categoria}
-                          {" · "}
-                          <span
-                            style={{
-                              color: temFoto ? "#28a745" : "#dc3545",
-                              fontWeight: temFoto ? "bold" : "normal",
-                            }}
-                          >
-                            {temFoto ? "✅ Com Foto" : "❌ Sem Foto"}
-                          </span>
-                        </AlunoSub>
-                      </AlunoInfo>
-                    </AlunoContent>
-                  </AlunoLeft>
+                    <AlunoInfo>
+                      <AlunoNome>{nome}</AlunoNome>
+                      <AlunoSub>
+                        {matricula
+                          ? `Mat: ${matricula}`
+                          : cpf
+                          ? `CPF: ${cpf}`
+                          : "Sem doc"}
+                        {" · "}
+                        {categoria}
+                        {" · "}
+                        <span
+                          style={{
+                            color: temFoto ? "#28a745" : "#dc3545",
+                            fontWeight: temFoto ? "bold" : "normal",
+                          }}
+                        >
+                          {temFoto ? "✅ Com Foto" : "❌ Sem Foto"}
+                        </span>
+                      </AlunoSub>
+                    </AlunoInfo>
+                  </AlunoContent>
 
                   <EditBtn
-                    onClick={() => {
-                      const studentComFoto = {
-                        ...student,
-                        id: alunoId,
-                        photoUrl: fotoUrl || null,
-                      };
-
-                      setEditingAluno({
-                        student: studentComFoto,
-                        id: alunoId,
-                      });
-                    }}
+                    onClick={() =>
+                      setEditingAluno({ student, id: alunoId || "" })
+                    }
                     title="Editar ou Excluir aluno"
                   >
                     ✏️
@@ -1284,26 +1230,16 @@ export default function CarteirinhaGenerator() {
           onClose={() => setEditingAluno(null)}
           onSave={(updated) => {
             if (!updated) {
+              // Lógica de exclusão: remove o item nulo
               setData((prev) =>
                 prev.filter((s) => s && s.id !== editingAluno?.id),
               );
             } else {
               if (!editingAluno?.id) {
-                if (updated?.id) {
-                  const alunoIds = JSON.parse(
-                    localStorage.getItem("alunoIds") || "{}",
-                  );
-                  const matKey = normalizeMatricula(updated["Nº Matric"]);
-                  const cpfKey = normalizeCpf(updated["CPF"]);
-
-                  if (matKey) alunoIds[matKey] = updated.id;
-                  if (cpfKey) alunoIds[cpfKey] = updated.id;
-
-                  localStorage.setItem("alunoIds", JSON.stringify(alunoIds));
-                }
-
+                // É UM NOVO CADASTRO: Adiciona no topo da lista
                 setData((prev) => [updated, ...prev]);
               } else {
+                // É UMA EDIÇÃO: Substitui o item antigo
                 setData((prev) =>
                   prev.map((s) =>
                     s && s.id === editingAluno.id ? updated : s,
@@ -1311,8 +1247,7 @@ export default function CarteirinhaGenerator() {
                 );
               }
             }
-
-            setEditingAluno(null);
+            setEditingAluno(null); // Fecha o modal imediatamente
           }}
         />
       )}
@@ -1335,58 +1270,6 @@ export default function CarteirinhaGenerator() {
 }
 
 // ─── STYLED COMPONENTS ────────────────────────────────────────────────────────
-
-const AlunoLeft = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: 1;
-`;
-
-const AlunoCheckbox = styled.input`
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-  accent-color: #0070f3;
-  flex-shrink: 0;
-`;
-
-const SelectionBar = styled.div`
-  display: flex;
-  justify-content: flex-start;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  background: #f8f9fb;
-  border: 1px solid #e7eaf0;
-  border-radius: 10px;
-  font-size: 13px;
-  color: #555;
-  flex-wrap: wrap;
-`;
-
-const SelectionActions = styled.div`
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-`;
-
-const SmallActionButton = styled.button`
-  padding: 6px 10px;
-  border: 1px solid #d0d7e2;
-  border-radius: 8px;
-  background: #fff;
-  color: #333;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-
-  &:hover {
-    background: #f1f4f8;
-  }
-`;
 
 const AlunoAvatar = styled.div<{ src?: string }>`
   width: 45px;
