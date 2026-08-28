@@ -184,6 +184,8 @@ export default function CarteirinhaGenerator() {
   const [searchAlunos, setSearchAlunos] = useState("");
   const [selectedAlunos, setSelectedAlunos] = useState<string[]>([]);
 
+  const [sortBy, setSortBy] = useState<"nome" | "matricula">("nome");
+
   const [searchPreview, setSearchPreview] = useState("");
   const [previewStudent, setPreviewStudent] = useState<any | null>(null);
   const [showPreviewDropdown, setShowPreviewDropdown] = useState(false);
@@ -381,20 +383,37 @@ export default function CarteirinhaGenerator() {
     })
     .slice(0, 6);
 
-  const filteredAlunos = data.filter((s) => {
-    if (!s) return false;
+  const filteredAlunos = data
+    .filter((s) => {
+      if (!s) return false;
 
-    const term = searchAlunos.toLowerCase().trim();
-    if (!term) return true;
+      const term = searchAlunos.toLowerCase().trim();
+      if (!term) return true;
 
-    const nome = String(s["ALUNO"] || "").toLowerCase();
-    const matricula = String(s["Nº Matric"] || "").toLowerCase();
-    const cpf = String(s["CPF"] || "").toLowerCase();
+      const nome = String(s["ALUNO"] || "").toLowerCase();
+      const matricula = String(s["Nº Matric"] || "").toLowerCase();
+      const cpf = String(s["CPF"] || "").toLowerCase();
 
-    return (
-      nome.includes(term) || matricula.includes(term) || cpf.includes(term)
-    );
-  });
+      return (
+        nome.includes(term) || matricula.includes(term) || cpf.includes(term)
+      );
+    })
+    .sort((a, b) => {
+      if (sortBy === "matricula") {
+        const matA = String(a?.["Nº Matric"] || "").trim();
+        const matB = String(b?.["Nº Matric"] || "").trim();
+
+        if (!matA && matB) return 1;
+        if (matA && !matB) return -1;
+
+        return matA.localeCompare(matB, "pt-BR", { numeric: true });
+      }
+
+      const nomeA = String(a?.["ALUNO"] || "").toLowerCase();
+      const nomeB = String(b?.["ALUNO"] || "").toLowerCase();
+
+      return nomeA.localeCompare(nomeB, "pt-BR");
+    });
 
   const previewPhotoUrl = previewStudent
     ? sessionPhotos[
@@ -1180,6 +1199,23 @@ export default function CarteirinhaGenerator() {
               {filteredAlunos.length} resultado(s) para "{searchAlunos}"
             </SearchCount>
           )}
+          <SortBar>
+            <span>Ordenar por:</span>
+            <SortButton
+              $active={sortBy === "nome"}
+              onClick={() => setSortBy("nome")}
+              type="button"
+            >
+              🔤 Nome
+            </SortButton>
+            <SortButton
+              $active={sortBy === "matricula"}
+              onClick={() => setSortBy("matricula")}
+              type="button"
+            >
+              🔢 Matrícula
+            </SortButton>
+          </SortBar>
 
           <SelectionBar>
             <span>
@@ -1335,6 +1371,30 @@ export default function CarteirinhaGenerator() {
 }
 
 // ─── STYLED COMPONENTS ────────────────────────────────────────────────────────
+
+const SortBar = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #666;
+  flex-wrap: wrap;
+`;
+
+const SortButton = styled.button<{ $active?: boolean }>`
+  padding: 6px 10px;
+  border: 1px solid ${(p) => (p.$active ? "#0070f3" : "#d0d7e2")};
+  border-radius: 8px;
+  background: ${(p) => (p.$active ? "#0070f3" : "#fff")};
+  color: ${(p) => (p.$active ? "#fff" : "#333")};
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  &:hover {
+    opacity: 0.9;
+  }
+`;
 
 const AlunoLeft = styled.div`
   display: flex;
